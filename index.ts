@@ -1,9 +1,7 @@
 import { $ } from 'bun';
 import { OpenAI } from 'openai';
 
-await $`echo "Hello World!"`;
-
-await $`cd ../recruiting-crx && git log -1 --format=%ad`;
+$.cwd('/home/dgranado/Projects/recruiting-crx');
 
 const client = new OpenAI({
 	baseURL: 'http://localhost:11434/v1',
@@ -15,8 +13,8 @@ const runner = await client.beta.chat.completions.runTools({
 	// model: 'deepseek-r1:32b',
 	// model: 'llama3:8b',
 	// model: 'llama3:latest',
-	// model: 'llama3.2:1b-instruct-q8_0',
-	model: 'llama3.2:3b-instruct-fp16',
+	model: 'llama3.2:1b-instruct-q8_0',
+	// model: 'llama3.2:3b-instruct-fp16',
 	// model: 'llava-phi3:latest',
 	// model: 'llava:latest',
 	// model: 'minicpm-v:latest',
@@ -33,21 +31,26 @@ const runner = await client.beta.chat.completions.runTools({
 	tools: [{
 		type: 'function',
 		function: {
-			function: cli,
-			// name: 'cli',
+			function: gitCommitHistory,
 			parse: JSON.parse,
-			description: 'Execute a shell command and receive the output. They are executed in the context of the Foo project directory.',
+			description: 'Get commit history of the project',
 			parameters: {
 				type: "object",
-				required: ["cmd", "reasoning"],
+				required: ["reasoning"],
 				properties: {
-					cmd: {
-						type: "string",
-						description: "The shell command to execute"
+					limit: {
+						type: "number",
+						description: "The number of commits to return.",
+						default: 1,
+					},
+					verbose: {
+						type: "boolean",
+						description: "Whether to include verbose output.",
+						default: 1,
 					},
 					reasoning: {
 						type: "string",
-						description: "Explanation for why this command is being run"
+						description: "Explanation for why this command is being run.",
 					}
 				}
 			}
@@ -65,14 +68,25 @@ async function cli({cmd, reasoning}: {cmd: string, reasoning: string}) {
 	return result;
 }
 
-// for await (const chunk of stream) {
-// 	process.stdout.write(chunk.choices[0]?.delta?.content || '');
-// }
+async function gitCommitHistory(args: {limit?: number, reasoning: string, verbose?: boolean}) {
+	const {
+		limit = -1,
+		verbose = false,
+		reasoning
+	} = args;
+	console.log('REASON:', reasoning);
+	console.log('RUNNING:', `git log -${limit}`);
 
+	try {
+		const result = await $`git log -${limit} ${verbose ? '-v' : ''}`.text();
+		console.log('RESULT:', result);
+		return result;
+	} catch (error) {
+		console.error('ERROR RUNNING CMD:', ((error as any).stderr as Buffer).toString() || '');
+		return 'Thu Jan 30 18:02:28 2025 -0600';
+	}
+}
 
 const finalContent = await runner.finalContent();
-console.log();
 console.log('Final content:', finalContent);
-
-process.stdout.write('\n')
 
