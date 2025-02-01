@@ -1,7 +1,25 @@
 import { $ } from 'bun';
+import { parseArgs } from 'util';
 import { OpenAI } from 'openai';
+import { exists } from 'fs/promises';
 
-$.cwd('/home/dgranado/Projects/recruiting-crx');
+
+const {
+	positionals: [, , projectDirectory, query]
+	} = parseArgs({
+	args: Bun.argv,
+	strict: true,
+	allowPositionals: true,
+});
+
+if(!projectDirectory) throw Error('No project directory provided.');
+if(!query) throw Error('No query provided.');
+if(!await exists(projectDirectory)) throw Error('Project directory does not exist.');
+
+console.log('Project directory:', projectDirectory);
+console.log('Running query:', query);
+
+$.cwd(projectDirectory);
 
 const client = new OpenAI({
 	baseURL: 'http://localhost:11434/v1',
@@ -24,7 +42,7 @@ const runner = await client.beta.chat.completions.runTools({
 	messages: [
 		// { role: 'user', content: 'Why is the sky blue?' },
 		{ role: 'system', content: 'You are a software engineer looking to research answers to questions related to a codebase of a project called Foo. It uses git for version control.' },
-		{ role: 'user', content: 'When was the last commit to the project?' },
+		{ role: 'user', content: query },
 	],
 	stream: true,
 	tool_choice: 'auto',
@@ -55,38 +73,114 @@ const runner = await client.beta.chat.completions.runTools({
 				}
 			}
 		}
+	}, {
+		type: 'function',
+		function: {
+			function: ls,
+			parse: JSON.parse,
+			description: 'List the contents of a directory',
+			parameters: {
+				type: "object",
+				required: ["reasoning"],
+				properties: {
+					subDirectory: {
+						type: "string",
+						description: "The sub directory to list.",
+					},
+					reasoning: {
+						type: "string",
+						description: "Explanation for why this command is being run.",
+					}
+				}
+			}
+		}
+	}, {
+		type: 'function',
+		function: {
+			function: grep,
+			parse: JSON.parse,
+			description: 'List the contents of a directory',
+			parameters: {
+				type: "object",
+				required: ["pattern", "reasoning"],
+				properties: {
+					pattern: {
+						type: "string",
+						description: "The pattern to search for.",
+					},
+					target: {
+						type: "string",
+						description: "The target to search.",
+						default: ".",
+					},
+					recursive: {
+						type: "boolean",
+						description: "Whether to search recursively.",
+						default: false,
+					},
+					verbose: {
+						type: "boolean",
+						description: "Whether to include verbose output.",
+						default: true,
+					},
+					reasoning: {
+						type: "string",
+						description: "Explanation for why this command is being run.",
+					}
+				}
+			}
+		}
 	}],
 })
 .on('message', (message) => console.log(`MESSAGE: `, message));
 
-async function cli({cmd, reasoning}: {cmd: string, reasoning: string}) {
-	console.log(`REASON: ${reasoning}`);
-	const x = `cd ../recruiting-crx && ${cmd}`
-	console.log(`RUNNING: ${x}`);
-	const result = await $`${x}`.text();
-	console.log('RESULT:', result);
-	return result;
-}
+const finalContent = await runner.finalContent();
+console.log('Final content:', finalContent);
 
 async function gitCommitHistory(args: {limit?: number, reasoning: string, verbose?: boolean}) {
 	const {
-		limit = -1,
+		limit = 1,
 		verbose = false,
 		reasoning
 	} = args;
 	console.log('REASON:', reasoning);
 	console.log('RUNNING:', `git log -${limit}`);
 
-	try {
-		const result = await $`git log -${limit} ${verbose ? '-v' : ''}`.text();
-		console.log('RESULT:', result);
-		return result;
-	} catch (error) {
-		console.error('ERROR RUNNING CMD:', ((error as any).stderr as Buffer).toString() || '');
-		return 'Thu Jan 30 18:02:28 2025 -0600';
-	}
+	const result = await $`git log -${limit} ${verbose ? '-v' : ''}`.text();
+	console.log('RESULT:', result);
+	return result;
 }
 
-const finalContent = await runner.finalContent();
-console.log('Final content:', finalContent);
+async function ls(args: { subDirectory?: string, reasoning: string}) {
+	const {
+		subDirectory,
+		reasoning
+	} = args;
+	console.log('REASON:', reasoning);
+	console.log('RUNNING:', `ls ${subDirectory}`);
 
+	const result = await $`ls ${subDirectory}`.text();
+	console.log('RESULT:', result);
+	return result;
+}
+
+async function grep(args: {
+		target?: string,
+		pattern?: string,
+		recursive?: boolean,
+		verbose?: boolean,
+		reasoning: string
+	}) {
+	const {
+		target = '.',
+		pattern,
+		recursive = false,
+		verbose = true,
+		reasoning
+	} = args;
+	console.log('REASON:', reasoning);
+	
+	const result = await $`grep ${pattern || ''} ${target || ''} ${recursive ? '-r' : ''} ${verbose ? '-v' : ''}`.text();
+	console.log('RESULT:', result);
+	return result;
+}
