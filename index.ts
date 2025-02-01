@@ -1,8 +1,7 @@
-import { $ } from 'bun';
+import { $, file } from 'bun';
 import { parseArgs } from 'util';
 import { OpenAI } from 'openai';
 import { exists } from 'fs/promises';
-
 
 const {
 	positionals: [, , projectDirectory, query]
@@ -22,17 +21,17 @@ console.log('Running query:', query);
 $.cwd(projectDirectory);
 
 const client = new OpenAI({
-	baseURL: 'http://localhost:11434/v1',
+	baseURL: 'http://192.168.1.14:11434/v1',
 });
 
-const runner = await client.beta.chat.completions.runTools({
+const runner = client.beta.chat.completions.runTools({
 	// model: 'deepseek-r1:1.5b',
 	// model: 'deepseek-r1:14b',
 	// model: 'deepseek-r1:32b',
 	// model: 'llama3:8b',
 	// model: 'llama3:latest',
-	model: 'llama3.2:1b-instruct-q8_0',
-	// model: 'llama3.2:3b-instruct-fp16',
+	// model: 'llama3.2:1b-instruct-q8_0',
+	model: 'llama3.2:3b-instruct-fp16',
 	// model: 'llava-phi3:latest',
 	// model: 'llava:latest',
 	// model: 'minicpm-v:latest',
@@ -41,7 +40,7 @@ const runner = await client.beta.chat.completions.runTools({
 	// model: 'vitali87/shell-commands-qwen2-1.5b-extended:latest',
 	messages: [
 		// { role: 'user', content: 'Why is the sky blue?' },
-		{ role: 'system', content: 'You are a software engineer looking to research answers to questions related to a codebase of a project called Foo. It uses git for version control.' },
+		{ role: 'system', content: `You are a software engineer looking to research answers to questions related to a code project at ${projectDirectory}. Tools are run in the context of the project.` },
 		{ role: 'user', content: query },
 	],
 	stream: true,
@@ -130,12 +129,33 @@ const runner = await client.beta.chat.completions.runTools({
 				}
 			}
 		}
+	}, {
+		type: 'function',
+		function: {
+			function: getFile,
+			parse: JSON.parse,
+			description: 'Get a file from the project',
+			parameters: {
+				type: "object",
+				required: ["filePath", "reasoning"],
+				properties: {
+					filePath: {
+						type: "string",
+						description: "The relative path to the file.",
+					},
+					reasoning: {
+						type: "string",
+						description: "Explanation for why this command is being run.",
+					}
+				}
+			}
+		}
 	}],
 })
 .on('message', (message) => console.log(`MESSAGE: `, message));
 
 const finalContent = await runner.finalContent();
-console.log('Final content:', finalContent);
+console.log('FINAL RESPONSE:', finalContent);
 
 async function gitCommitHistory(args: {limit?: number, reasoning: string, verbose?: boolean}) {
 	const {
@@ -157,9 +177,9 @@ async function ls(args: { subDirectory?: string, reasoning: string}) {
 		reasoning
 	} = args;
 	console.log('REASON:', reasoning);
-	console.log('RUNNING:', `ls ${subDirectory}`);
+	console.log('RUNNING:', `ls ${subDirectory || ''}`);
 
-	const result = await $`ls ${subDirectory}`.text();
+	const result = await $`ls ${subDirectory || ''}`.text();
 	console.log('RESULT:', result);
 	return result;
 }
@@ -179,8 +199,24 @@ async function grep(args: {
 		reasoning
 	} = args;
 	console.log('REASON:', reasoning);
+
+	if(!pattern?.trim()) return 'No pattern provided';
 	
-	const result = await $`grep ${pattern || ''} ${target || ''} ${recursive ? '-r' : ''} ${verbose ? '-v' : ''}`.text();
+	const result = await $`grep --exclude-dir=node_modules --exclude-dir=dist ${pattern || ''} ${target || ''} ${recursive ? '-r' : ''} ${verbose ? '-v' : ''}`.text();
 	console.log('RESULT:', result);
 	return result;
+}
+
+async function getFile(args: { filePath: string, reasoning: string }) {
+	const {
+		filePath,
+		reasoning,
+	} = args;
+
+	console.log('RETRIEVING:', filePath);
+	console.log('REASONING:', reasoning);
+
+	if(!await exists(projectDirectory)) return 'No such file';
+
+	return file(filePath).text();
 }
