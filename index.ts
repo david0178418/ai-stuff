@@ -4,7 +4,6 @@ import { chdir } from 'process';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
 import { ChatOllama, Ollama } from '@langchain/ollama';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
-import { tool } from '@langchain/core/tools';
 import makeTools from './make-tools';
 
 const {
