@@ -1,6 +1,6 @@
 # Just a test of AI stuff.
 
-This project is just incrementally learning how to leverage AI.  In this case, the script is provided a project directory and a prompt.  The AI is provided some simple tools (`gitCommitHistory`, `ls`, `grep`, and `getFile`) to attempt to answer questions about the prompt.
+This project is just incrementally learning how to leverage AI.  In this case, the script is provided a javascript project directory and a prompt.  The AI is provided some simple tools (`gitCommitHistory`, `ls`, `grep`, and `getFile`) to attempt to answer questions about the prompt.
 
 ## Requirements
 
