@@ -2,7 +2,7 @@ import { parseArgs } from 'util';
 import { exists } from 'fs/promises';
 import { chdir } from 'process';
 import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
-import { ChatOllama, Ollama } from '@langchain/ollama';
+import { ChatOllama } from '@langchain/ollama';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import makeTools from './make-tools';
 
@@ -38,7 +38,7 @@ const llm = new ChatOllama({
 const tools = makeTools(projectDirectory);
 
 const prompt = ChatPromptTemplate.fromMessages([
-	["system", `You are a web developer who commonly uses React and related librariers. You are will research answers to questions related to a code project at ${projectDirectory}. The user will not be able to respond beyond the initial prompt. Continue to use the tools at your disposal until all options are exhausted to attempt to reach a conclusion. Tools are run in the context of the project.`],
+	["system", `You are a web developer who commonly uses React and related libraries. You are will research answers to questions related to a code project at ${projectDirectory} using the provided tools.`],
 	["placeholder", "{chat_history}"],
 	["human", "{input}"],
 	["placeholder", "{agent_scratchpad}"],
