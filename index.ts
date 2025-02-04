@@ -1,161 +1,122 @@
-import { $, file } from 'bun';
 import { parseArgs } from 'util';
-import { OpenAI } from 'openai';
 import { exists } from 'fs/promises';
+import { chdir } from 'process';
+import { AgentExecutor, createToolCallingAgent } from 'langchain/agents';
+import { ChatOllama, Ollama } from '@langchain/ollama';
+import { $, file } from 'bun';
+import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { tool } from '@langchain/core/tools';
+import { z } from 'zod';
+import { join } from 'path';
 
 const {
-	positionals: [, , projectDirectory, query]
-	} = parseArgs({
-	args: Bun.argv,
+	AI_SERVER = 'http://localhost:11434',
+	MODEL,
+} = process.env;
+
+const {
+	positionals: [, , projectDirectory, query],
+} = parseArgs({
+	args: process.argv,
 	strict: true,
 	allowPositionals: true,
 });
 
-if(!projectDirectory) throw Error('No project directory provided.');
-if(!query) throw Error('No query provided.');
-if(!await exists(projectDirectory)) throw Error('Project directory does not exist.');
+if(!MODEL) throw new Error('No MODEL environment variable set.');
+if(!projectDirectory) throw new Error('No project directory provided.');
+if(!query) throw new Error('No query provided.');
+if(!(await exists(projectDirectory))) throw new Error('Project directory does not exist.');
 
+console.log(`Running "${MODEL}" on "${AI_SERVER}"`);
 console.log('Project directory:', projectDirectory);
 console.log('Running query:', query);
 
-$.cwd(projectDirectory);
+chdir(projectDirectory);
 
-const client = new OpenAI({
-	baseURL: 'http://192.168.1.14:11434/v1',
+const llm = new ChatOllama({
+	baseUrl: AI_SERVER,
+	model: MODEL,
 });
 
-const runner = client.beta.chat.completions.runTools({
-	// model: 'deepseek-r1:1.5b',
-	// model: 'deepseek-r1:14b',
-	// model: 'deepseek-r1:32b',
-	// model: 'llama3:8b',
-	// model: 'llama3:latest',
-	// model: 'llama3.2:1b-instruct-q8_0',
-	model: 'llama3.2:3b-instruct-fp16',
-	// model: 'llava-phi3:latest',
-	// model: 'llava:latest',
-	// model: 'minicpm-v:latest',
-	// model: 'mistral-small:24b',
-	// model: 'qwen2.5-coder:1.5b',
-	// model: 'vitali87/shell-commands-qwen2-1.5b-extended:latest',
-	messages: [
-		// { role: 'user', content: 'Why is the sky blue?' },
-		{ role: 'system', content: `You are a software engineer looking to research answers to questions related to a code project at ${projectDirectory}. Tools are run in the context of the project.` },
-		{ role: 'user', content: query },
-	],
-	stream: true,
-	tool_choice: 'auto',
-	tools: [{
-		type: 'function',
-		function: {
-			function: gitCommitHistory,
-			parse: JSON.parse,
-			description: 'Get commit history of the project',
-			parameters: {
-				type: "object",
-				required: ["reasoning"],
-				properties: {
-					limit: {
-						type: "number",
-						description: "The number of commits to return.",
-						default: 1,
-					},
-					verbose: {
-						type: "boolean",
-						description: "Whether to include verbose output.",
-						default: 1,
-					},
-					reasoning: {
-						type: "string",
-						description: "Explanation for why this command is being run.",
-					}
-				}
-			}
+const tools = [
+	tool(
+		gitCommitHistory,
+		{
+			name: 'gitCommitHistory',
+			description: 'Get commit history of the project.',
+			schema: z.object({
+				limit: z.number().optional().describe('Number of commits to retrieve'),
+				reasoning: z.string().describe('Reasoning for the commit history request'),
+				verbose: z.boolean().optional().describe('Whether to include verbose commit details'),
+			}),
 		}
-	}, {
-		type: 'function',
-		function: {
-			function: ls,
-			parse: JSON.parse,
-			description: 'List the contents of a directory',
-			parameters: {
-				type: "object",
-				required: ["reasoning"],
-				properties: {
-					subDirectory: {
-						type: "string",
-						description: "The sub directory to list.",
-					},
-					reasoning: {
-						type: "string",
-						description: "Explanation for why this command is being run.",
-					}
-				}
-			}
+	),
+	tool(
+		ls,
+		{
+			name: 'ls',
+			description: 'List the contents of a directory.',
+			schema: z.object({
+				subDirectory: z.string().optional().describe('Subdirectory to list. Is always within the project directory.'),
+				reasoning: z.string().describe('Reasoning for the directory listing request'),
+			}),
 		}
-	}, {
-		type: 'function',
-		function: {
-			function: grep,
-			parse: JSON.parse,
-			description: 'List the contents of a directory',
-			parameters: {
-				type: "object",
-				required: ["pattern", "reasoning"],
-				properties: {
-					pattern: {
-						type: "string",
-						description: "The pattern to search for.",
-					},
-					target: {
-						type: "string",
-						description: "The target to search.",
-						default: ".",
-					},
-					recursive: {
-						type: "boolean",
-						description: "Whether to search recursively.",
-						default: false,
-					},
-					verbose: {
-						type: "boolean",
-						description: "Whether to include verbose output.",
-						default: true,
-					},
-					reasoning: {
-						type: "string",
-						description: "Explanation for why this command is being run.",
-					}
-				}
-			}
+	),
+	tool(
+		grep,
+		{
+			name: 'grep',
+			description: 'Search for a pattern in files.',
+			schema: z.object({
+				target: z.string().optional().describe('Target directory or file. Is always within the project directory.'),
+				pattern: z.string().describe('Search pattern'),
+				reasoning: z.string().describe('Reasoning for the grep request'),
+			}),
 		}
-	}, {
-		type: 'function',
-		function: {
-			function: getFile,
-			parse: JSON.parse,
-			description: 'Get a file from the project',
-			parameters: {
-				type: "object",
-				required: ["filePath", "reasoning"],
-				properties: {
-					filePath: {
-						type: "string",
-						description: "The relative path to the file.",
-					},
-					reasoning: {
-						type: "string",
-						description: "Explanation for why this command is being run.",
-					}
-				}
-			}
+	),
+	tool(
+		getFile,
+		{
+			name: 'getFile',
+			description: 'Retrieve a file from the project. Is always within the project directory.',
+			schema: z.object({
+				filePath: z.string().describe('Path to the file'),
+				reasoning: z.string().describe('Reasoning for the file retrieval request'),
+			}),
 		}
-	}],
-})
-.on('message', (message) => console.log(`MESSAGE: `, message));
+	),
+];
 
-const finalContent = await runner.finalContent();
-console.log('FINAL RESPONSE:', finalContent);
+const prompt = ChatPromptTemplate.fromMessages([
+	["system", `You are a web developer who commonly uses React and related librariers. You are will research answers to questions related to a code project at ${projectDirectory}. The user will not be able to respond beyond the initial prompt. Continue to use the tools at your disposal until all options are exhausted to attempt to reach a conclusion. Tools are run in the context of the project.`],
+	["placeholder", "{chat_history}"],
+	["human", "{input}"],
+	["placeholder", "{agent_scratchpad}"],
+]);
+
+const agent = await createToolCallingAgent({
+	llm,
+	tools,
+	prompt,
+});
+
+console.log('Agent loaded.');
+
+const agentExecutor = new AgentExecutor({
+	agent,
+	tools,
+	returnIntermediateSteps: true,
+});
+
+try {
+	
+	const result = await agentExecutor.invoke({
+		input: query,
+	});
+	console.log('FINAL RESPONSE:', result.output);
+} catch (error) {
+	console.error('Error during agent execution:', error);
+}
 
 async function gitCommitHistory(args: {limit?: number, reasoning: string, verbose?: boolean}) {
 	const {
@@ -163,7 +124,7 @@ async function gitCommitHistory(args: {limit?: number, reasoning: string, verbos
 		verbose = false,
 		reasoning
 	} = args;
-	console.log('REASON:', reasoning);
+	console.log('REASON (gitCommitHistory):', reasoning);
 	console.log('RUNNING:', `git log -${limit}`);
 
 	const result = await $`git log -${limit} ${verbose ? '-v' : ''}`.text();
@@ -173,38 +134,63 @@ async function gitCommitHistory(args: {limit?: number, reasoning: string, verbos
 
 async function ls(args: { subDirectory?: string, reasoning: string}) {
 	const {
-		subDirectory,
+		subDirectory = '/',
 		reasoning
 	} = args;
-	console.log('REASON:', reasoning);
-	console.log('RUNNING:', `ls ${subDirectory || ''}`);
+	console.log('REASON (ls):', reasoning);
 
-	const result = await $`ls ${subDirectory || ''}`.text();
+	const fullPath = subDirectory.startsWith(projectDirectory) ? projectDirectory : join(projectDirectory, subDirectory);
+
+	if(!await exists(fullPath)) return 'No such directory';
+
+	console.log('RUNNING:', `ls ${fullPath}`);
+
+	const result = await $`ls ${fullPath || ''}`.text();
 	console.log('RESULT:', result);
 	return result;
 }
 
 async function grep(args: {
 		target?: string,
-		pattern?: string,
-		recursive?: boolean,
-		verbose?: boolean,
+		pattern: string,
 		reasoning: string
 	}) {
 	const {
 		target = '.',
 		pattern,
-		recursive = false,
-		verbose = true,
 		reasoning
 	} = args;
-	console.log('REASON:', reasoning);
+	console.log('REASON (grep):', reasoning);
 
-	if(!pattern?.trim()) return 'No pattern provided';
+	if(!pattern.trim()) return 'No pattern to search for';
+
+	const fullPath = target.startsWith('/') ?
+		projectDirectory :
+		join(projectDirectory, target);
+
+	if(!fullPath.startsWith(projectDirectory)) {
+		console.log(`RESULT: No such file or directory: ${fullPath}`);
+		return `No such file or directory: ${fullPath}`;
+	}
+
+	if(!(await exists(fullPath))) {
+		console.log(`RESULT: No such file or directory: ${fullPath}`);
+		return `No such file or directory: ${fullPath}`;
+	}
+
+	console.log('RUNNING:', `grep --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git -lrE "${pattern}" ${fullPath}`);
 	
-	const result = await $`grep --exclude-dir=node_modules --exclude-dir=dist ${pattern || ''} ${target || ''} ${recursive ? '-r' : ''} ${verbose ? '-v' : ''}`.text();
-	console.log('RESULT:', result);
-	return result;
+	try {
+		const result = await $`grep --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git -lrE "${pattern}" ${fullPath}`.text();
+		console.log('RESULT:', result);
+		return result;
+	} catch(e) {
+		console.error('Something went wrong');
+		console.error(Object.keys((e as any)?.stderr?.toString() || {}));
+		const x = await $`grep --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git -lrE "${pattern}" ${fullPath}`.nothrow().quiet();
+		console.log('----', x, x.stderr.toString(), x.stdout.toString(), x.arrayBuffer(), x.text());
+		return 'Something went wrong';
+	}
 }
 
 async function getFile(args: { filePath: string, reasoning: string }) {
@@ -213,10 +199,16 @@ async function getFile(args: { filePath: string, reasoning: string }) {
 		reasoning,
 	} = args;
 
+	console.log('REASON (getFile):', reasoning);
+	
+	const fullPath = filePath.startsWith(projectDirectory) ? projectDirectory : join(projectDirectory, filePath);
+
 	console.log('RETRIEVING:', filePath);
-	console.log('REASONING:', reasoning);
 
-	if(!await exists(projectDirectory)) return 'No such file';
+	if(!(await exists(fullPath))) {
+		console.log('RESULT: No such file.');
+		return 'No such file';
+	}
 
-	return file(filePath).text();
+	return file(fullPath).text();
 }
