@@ -3,6 +3,7 @@ import { $, file } from 'bun';
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { join } from 'path';
+import { glob } from 'glob';
 
 export default (projectDirectory: string) => ([
 	tool(
@@ -48,6 +49,18 @@ export default (projectDirectory: string) => ([
 			schema: z.object({
 				filePath: z.string().describe('Path to the file'),
 				reasoning: z.string().describe('Reasoning for the file retrieval request'),
+			}),
+		}
+	),
+	tool(
+		find(projectDirectory),
+		{
+			name: 'find',
+			description: 'Recursively find files in a directory that match a given pattern.',
+			schema: z.object({
+				pattern: z.string().describe('Pattern to match files against, supports glob syntax'),
+				subDirectory: z.string().optional().describe('Subdirectory to start search from. Is always within the project directory.'),
+				reasoning: z.string().describe('Reasoning for the file search request'),
 			}),
 		}
 	),
@@ -148,5 +161,42 @@ function getFile(projectDirectory: string) {
 		}
 
 		return file(fullPath).text();
+	};
+}
+
+function find(projectDirectory: string) {
+	return async (args: { 
+		pattern: string, 
+		subDirectory?: string, 
+		reasoning: string 
+	}) => {
+		const {
+			pattern,
+			subDirectory = '',
+			reasoning
+		} = args;
+		console.log('REASON (find):', reasoning);
+		const searchPath = subDirectory.startsWith('/') ?
+			join(projectDirectory, subDirectory.slice(1)) :
+			join(projectDirectory, subDirectory);
+
+		if (!(await exists(searchPath))) {
+			console.log('RESULT: No such directory');
+			return 'No such directory';
+		}
+		try {
+			console.log('RUNNING:', `glob ${pattern} in ${searchPath}`);
+			const files = await glob(join(searchPath, pattern), {
+				nodir: true, // Do not match directories
+				ignore: ['node_modules/**', 'dist/**', '.git/**'] // Exclude these directories by default
+			});
+			// Convert paths to be relative to the project directory for consistency
+			const relativeFiles = files.map(file => file.slice(projectDirectory.length + 1));
+			console.log('RESULT:', relativeFiles.join('\n'));
+			return relativeFiles.join('\n');
+		} catch (e) {
+			console.error('Error during glob search:', e);
+			return 'Error during search';
+		}
 	};
 }
